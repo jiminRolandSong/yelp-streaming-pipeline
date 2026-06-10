@@ -266,20 +266,95 @@ Format: numbered list (1. 2. 3.)"""
 
 # ── Run All ───────────────────────────────────────────────────────────────────
 
+def _build_all_prompts(bq: bigquery.Client) -> dict[str, str]:
+    """Run all 4 BQ queries in parallel and return {category: prompt}."""
+
+    def _category_perf():
+        sql = f"""
+            SELECT b.categories, ROUND(AVG(r.stars), 2) AS avg_stars, COUNT(*) AS review_count
+            FROM `{BQ_PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}` r
+            JOIN `{BQ_PROJECT_ID}.{BQ_DATASET}.dim_businesses` b USING (business_id)
+            WHERE b.categories IS NOT NULL
+            GROUP BY b.categories HAVING COUNT(*) >= 50
+            ORDER BY avg_stars DESC LIMIT 15
+        """
+        rows = _query(bq, sql)
+        data = "\n".join(f"  {r['categories']}: avg {r['avg_stars']} stars ({r['review_count']} reviews)" for r in rows)
+        return "category_performance", f"You are a business analytics expert.\n\n[Top Categories by Avg Star Rating]\n{data}\n\nProvide exactly 3 key insights from a business owner's perspective about category performance. One sentence each.\nFormat: numbered list (1. 2. 3.)"
+
+    def _review_engagement():
+        sql = f"""
+            SELECT CAST(stars AS INT64) AS stars,
+                   ROUND(AVG(CAST(review_length AS FLOAT64)), 0) AS avg_review_length,
+                   ROUND(AVG(CAST(useful AS FLOAT64)), 2) AS avg_useful,
+                   ROUND(AVG(CAST(funny AS FLOAT64)), 2) AS avg_funny,
+                   ROUND(AVG(CAST(cool AS FLOAT64)), 2) AS avg_cool,
+                   COUNT(*) AS review_count
+            FROM `{BQ_PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}`
+            WHERE stars IS NOT NULL AND review_length IS NOT NULL AND useful IS NOT NULL
+            GROUP BY stars ORDER BY stars
+        """
+        rows = _query(bq, sql)
+        data = "\n".join(f"  {r['stars']} stars: length={r['avg_review_length']}, useful={r['avg_useful']}, funny={r['avg_funny']}, cool={r['avg_cool']} ({r['review_count']} reviews)" for r in rows)
+        return "review_engagement", f"You are a business analytics expert.\n\n[Review Engagement by Star Rating]\n{data}\n\nProvide exactly 3 key insights about customer engagement. One sentence each.\nFormat: numbered list (1. 2. 3.)"
+
+    def _regional_competition():
+        sql = f"""
+            SELECT b.city, COUNT(DISTINCT b.business_id) AS business_count,
+                   ROUND(AVG(r.stars), 2) AS avg_stars, COUNT(*) AS review_count
+            FROM `{BQ_PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}` r
+            JOIN `{BQ_PROJECT_ID}.{BQ_DATASET}.dim_businesses` b USING (business_id)
+            WHERE b.city IS NOT NULL
+            GROUP BY b.city HAVING COUNT(*) >= 200
+            ORDER BY business_count DESC LIMIT 15
+        """
+        rows = _query(bq, sql)
+        data = "\n".join(f"  {r['city']}: {r['business_count']} businesses, avg {r['avg_stars']} stars ({r['review_count']} reviews)" for r in rows)
+        return "regional_competition", f"You are a business analytics expert.\n\n[Cities by Business Count vs Avg Star Rating]\n{data}\n\nProvide exactly 3 key insights about regional competition. One sentence each.\nFormat: numbered list (1. 2. 3.)"
+
+    def _sentiment_depth():
+        sql = f"""
+            SELECT CAST(stars AS INT64) AS stars, sentiment_bucket,
+                   ROUND(AVG(review_length), 0) AS avg_review_length,
+                   COUNT(*) AS review_count, ROUND(AVG(useful), 2) AS avg_useful
+            FROM `{BQ_PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}`
+            WHERE stars IS NOT NULL AND sentiment_bucket IS NOT NULL
+            GROUP BY stars, sentiment_bucket ORDER BY stars
+        """
+        rows = _query(bq, sql)
+        data = "\n".join(f"  {r['stars']} stars ({r['sentiment_bucket']}): length={r['avg_review_length']}, useful={r['avg_useful']}, count={r['review_count']}" for r in rows)
+        return "sentiment_depth", f"You are a business analytics expert.\n\n[Review Length and Usefulness by Sentiment]\n{data}\n\nProvide exactly 3 key insights about negative review patterns. One sentence each.\nFormat: numbered list (1. 2. 3.)"
+
+    prompts = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for future in as_completed([
+            executor.submit(_category_perf),
+            executor.submit(_review_engagement),
+            executor.submit(_regional_competition),
+            executor.submit(_sentiment_depth),
+        ]):
+            category, prompt = future.result()
+            prompts[category] = prompt
+            print(f"[BQ] Done: {category}")
+    return prompts
+
+
 def generate_all_insights() -> dict[str, str]:
-    tasks = {
-        "category_performance": generate_category_performance,
-        "review_engagement":    generate_review_engagement,
-        "regional_competition": generate_regional_competition,
-        "sentiment_depth":      generate_sentiment_depth,
-    }
+    bq = _get_bq_client()
+
+    # Phase 1: all 4 BQ queries in parallel
+    prompts = _build_all_prompts(bq)
+
+    # Phase 2: all 4 Cerebras calls in parallel
     results = {}
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(fn): category for category, fn in tasks.items()}
+        futures = {executor.submit(_call_cerebras, prompt): category for category, prompt in prompts.items()}
         for future in as_completed(futures):
             category = futures[future]
             try:
-                results[category] = future.result()
+                insights = future.result()
+                save_insight(insights, category=category)
+                results[category] = insights
                 print(f"[Cerebras] Done: {category}")
             except Exception as e:
                 print(f"[Cerebras] Failed: {category} — {e}")

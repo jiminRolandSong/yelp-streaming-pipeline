@@ -205,7 +205,7 @@ try:
             alt.Chart(df_stars)
             .mark_bar()
             .encode(
-                x=alt.X("stars:O", title="Stars"),
+                x=alt.X("stars:O", title="Stars", axis=alt.Axis(labelAngle=0)),
                 y=alt.Y("review_count:Q", title="Number of Reviews"),
                 color=alt.Color(
                     "stars:O",

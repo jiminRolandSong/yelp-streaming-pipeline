@@ -28,14 +28,24 @@ st.title("Overview")
 
 
 def _get_bq_client() -> bigquery.Client:
-    if os.path.exists(GCP_SERVICE_ACCOUNT_JSON):
-        credentials = service_account.Credentials.from_service_account_file(
-            GCP_SERVICE_ACCOUNT_JSON,
+    # Streamlit Cloud: JSON 내용이 환경변수에 있음
+    sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+    
+    if sa_json.startswith("{"):  # JSON 내용인 경우
+        import json
+        credentials = service_account.Credentials.from_service_account_info(
+            json.loads(sa_json),
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
-        return bigquery.Client(project=GCP_PROJECT_ID, credentials=credentials)
-    return bigquery.Client(project=GCP_PROJECT_ID)
-
+    elif os.path.exists(sa_json):  # 로컬: 파일 경로인 경우
+        credentials = service_account.Credentials.from_service_account_file(
+            sa_json,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+    else:
+        raise ValueError("GCP_SERVICE_ACCOUNT_JSON not set properly")
+    
+    return bigquery.Client(project=GCP_PROJECT_ID, credentials=credentials)
 
 @st.cache_data(ttl=600, show_spinner="Loading summary metrics...")
 def load_summary_metrics() -> dict:

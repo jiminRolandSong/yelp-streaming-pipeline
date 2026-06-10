@@ -35,14 +35,23 @@ st.markdown("Real-time status of each stage in the Yelp streaming pipeline.")
 
 
 def _get_bq_client() -> bigquery.Client:
-    if os.path.exists(GCP_SERVICE_ACCOUNT_JSON):
-        credentials = service_account.Credentials.from_service_account_file(
-            GCP_SERVICE_ACCOUNT_JSON,
+    import json
+    sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+    
+    if sa_json.startswith("{"):
+        credentials = service_account.Credentials.from_service_account_info(
+            json.loads(sa_json),
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
-        return bigquery.Client(project=GCP_PROJECT_ID, credentials=credentials)
-    return bigquery.Client(project=GCP_PROJECT_ID)
-
+    elif os.path.exists(sa_json):
+        credentials = service_account.Credentials.from_service_account_file(
+            sa_json,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+    else:
+        raise ValueError("GCP_SERVICE_ACCOUNT_JSON not set properly")
+    
+    return bigquery.Client(project=GCP_PROJECT_ID, credentials=credentials)
 
 def _get_bq_row_count(table: str) -> int:
     client = _get_bq_client()

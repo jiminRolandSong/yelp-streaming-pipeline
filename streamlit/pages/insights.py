@@ -12,7 +12,7 @@ if ROOT not in sys.path:
 
 from components.sidebar import render_sidebar
 from dynamodb.cache_manager import get_insights_by_category, get_insights_grouped_by_date
-from cerebras.insight_generator import (
+from ai_insights.insight_generator import (
     generate_category_performance,
     generate_review_engagement,
     generate_regional_competition,

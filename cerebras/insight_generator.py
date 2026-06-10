@@ -65,7 +65,7 @@ def _get_bq_client() -> bigquery.Client:
     else:
         raise ValueError("GCP_SERVICE_ACCOUNT_JSON not set properly")
     
-    return bigquery.Client(project=GCP_PROJECT_ID, credentials=credentials)
+    return bigquery.Client(project=BQ_PROJECT_ID, credentials=credentials)
 
 def _query(client: bigquery.Client, sql: str) -> list[dict]:
     rows = list(client.query(sql.strip()).result())

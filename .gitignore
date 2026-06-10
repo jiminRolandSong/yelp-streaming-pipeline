@@ -1,0 +1,5 @@
+.env
+data/
+*.json
+!bigquery/schemas/*.json
+!databricks/jobs/*.json
